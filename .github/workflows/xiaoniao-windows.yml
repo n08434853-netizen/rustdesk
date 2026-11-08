@@ -133,10 +133,32 @@ jobs:
           "VCPKG_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           # use the runner's cmake/ninja instead of letting vcpkg download them from GitHub releases
           "VCPKG_FORCE_SYSTEM_BINARIES=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # Route every vcpkg download through a script: github.com/<o>/<r>/releases/download/<tag>/<file>
+          # is rewritten to the REST API asset endpoint; everything else is fetched as-is.
+          $fetch = @'
+          param([string]$url, [string]$dst)
+          $m = [regex]::Match($url, '^https://github\.com/([^/]+)/([^/]+)/releases/download/([^/]+)/([^?#]+)')
+          if ($m.Success) {
+            $o = $m.Groups[1].Value; $r = $m.Groups[2].Value
+            $tag = [uri]::UnescapeDataString($m.Groups[3].Value); $name = [uri]::UnescapeDataString($m.Groups[4].Value)
+            $id = gh api "repos/$o/$r/releases/tags/$tag" --jq ".assets[] | select(.name==`"$name`") | .id"
+            if ($id) {
+              Write-Host "[fetch] $name via REST API asset $id"
+              curl.exe -fsSL --retry 5 --retry-all-errors -H "Accept: application/octet-stream" -H "Authorization: Bearer $env:GH_TOKEN" -o $dst "https://api.github.com/repos/$o/$r/releases/assets/$id"
+              if ($LASTEXITCODE -eq 0) { exit 0 }
+            }
+          }
+          Write-Host "[fetch] $url"
+          curl.exe -fsSL --retry 5 --retry-all-errors -o $dst $url
+          exit $LASTEXITCODE
+          '@
+          Set-Content -Path C:\vcpkg-fetch.ps1 -Value ($fetch -replace '(?m)^          ', '') -Encoding utf8
+          "X_VCPKG_ASSET_SOURCES=x-script,pwsh -NoProfile -ExecutionPolicy Bypass -File C:/vcpkg-fetch.ps1 {url} {dst}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Install vcpkg dependencies
         env:
           VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           if ! $VCPKG_ROOT/vcpkg install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"; then
