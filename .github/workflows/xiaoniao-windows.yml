@@ -131,8 +131,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "vcpkg.exe download failed" }
           & "$root\vcpkg.exe" version
           "VCPKG_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          # use the runner's cmake/ninja instead of letting vcpkg download them from GitHub releases
-          "VCPKG_FORCE_SYSTEM_BINARIES=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # (No VCPKG_FORCE_SYSTEM_BINARIES: the runner's CMake is too old for this vcpkg's scripts
+          #  — string(JSON ... STRING_ENCODE). vcpkg's own CMake/ninja downloads go through the fetch script below.)
           # Route every vcpkg download through a script: github.com/<o>/<r>/releases/download/<tag>/<file>
           # is rewritten to the REST API asset endpoint; everything else is fetched as-is.
           # vcpkg runs x-script with a scrubbed environment, so the token is read from a file, and curl is used instead of gh.
