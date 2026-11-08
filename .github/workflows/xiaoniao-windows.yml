@@ -150,13 +150,13 @@ jobs:
             } catch { Write-Host "[fetch] release lookup failed: $_" }
             if ($id) {
               Write-Host "[fetch] $name via REST API asset $id"
-              curl.exe -fsSL --retry 5 --retry-all-errors -H "Accept: application/octet-stream" -H "Authorization: Bearer $tok" -o $dst "https://api.github.com/repos/$o/$r/releases/assets/$id"
+              curl.exe -fsSL --create-dirs --retry 5 --retry-all-errors -H "Accept: application/octet-stream" -H "Authorization: Bearer $tok" -o $dst "https://api.github.com/repos/$o/$r/releases/assets/$id"
               if ($LASTEXITCODE -eq 0) { exit 0 }
               Write-Host "[fetch] REST API download failed ($LASTEXITCODE)"
             } else { Write-Host "[fetch] no asset id for $o/$r $tag $name" }
           }
           Write-Host "[fetch] $url"
-          curl.exe -fsSL --retry 5 --retry-all-errors -o $dst $url
+          curl.exe -fsSL --create-dirs --retry 5 --retry-all-errors -o $dst $url
           exit $LASTEXITCODE
           '@
           Set-Content -Path C:\vcpkg-fetch.ps1 -Value ($fetch -replace '(?m)^          ', '') -Encoding utf8
