@@ -81,14 +81,17 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           architecture: x64
 
+      # github.com/.../releases/download/... returns 504 today; the REST API asset endpoint works.
       - name: Replace engine with rustdesk custom flutter engine
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           flutter doctor -v
           flutter precache --windows
-          for ($i = 1; $i -le 5; $i++) {
-            try { Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip; break }
-            catch { Write-Host "engine download failed (try $i): $_"; if ($i -eq 5) { throw }; Start-Sleep -Seconds (30 * $i) }
-          }
+          $id = gh api repos/rustdesk/engine/releases/tags/main --jq '.assets[] | select(.name=="windows-x64-release.zip") | .id'
+          Write-Host "engine asset id: $id"
+          curl.exe -fL --retry 5 --retry-all-errors -H "Accept: application/octet-stream" -H "Authorization: Bearer $env:GH_TOKEN" -o windows-x64-release.zip "https://api.github.com/repos/rustdesk/engine/releases/assets/$id"
+          if ($LASTEXITCODE -ne 0) { throw "engine download failed" }
           Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
           mv -Force windows-x64-release/*  C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/
 
@@ -110,41 +113,26 @@ jobs:
         with:
           prefix-key: windows-2022-xiaoniao
 
-      # GitHub release downloads (vcpkg.exe) are flaky today: try up to 3 times.
-      - name: Setup vcpkg (try 1)
-        id: vcpkg1
-        continue-on-error: true
-        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
-        with:
-          vcpkgDirectory: C:\vcpkg
-          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
-          doNotCache: false
-
-      - name: Wait before vcpkg retry
-        if: steps.vcpkg1.outcome == 'failure'
-        run: Start-Sleep -Seconds 60
-
-      - name: Setup vcpkg (try 2)
-        id: vcpkg2
-        if: steps.vcpkg1.outcome == 'failure'
-        continue-on-error: true
-        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
-        with:
-          vcpkgDirectory: C:\vcpkg
-          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
-          doNotCache: false
-
-      - name: Wait before last vcpkg retry
-        if: steps.vcpkg1.outcome == 'failure' && steps.vcpkg2.outcome == 'failure'
-        run: Start-Sleep -Seconds 120
-
-      - name: Setup vcpkg (try 3)
-        if: steps.vcpkg1.outcome == 'failure' && steps.vcpkg2.outcome == 'failure'
-        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
-        with:
-          vcpkgDirectory: C:\vcpkg
-          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
-          doNotCache: false
+      # run-vcpkg's bootstrap downloads vcpkg.exe from the broken releases/download endpoint,
+      # so set vcpkg up by hand: pin the preinstalled C:\vcpkg checkout and fetch vcpkg.exe via the REST API.
+      - name: Setup vcpkg (manual, via REST API)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = 'C:\vcpkg'
+          git -C $root fetch --quiet origin $env:VCPKG_COMMIT_ID
+          git -C $root checkout -f --quiet $env:VCPKG_COMMIT_ID
+          $tag = ((Get-Content "$root\scripts\vcpkg-tool-metadata.txt") | Where-Object { $_ -match '^VCPKG_TOOL_RELEASE_TAG=' }) -replace '^VCPKG_TOOL_RELEASE_TAG=', ''
+          Write-Host "vcpkg tool release: $tag"
+          $id = gh api "repos/microsoft/vcpkg-tool/releases/tags/$tag" --jq '.assets[] | select(.name=="vcpkg.exe") | .id'
+          curl.exe -fL --retry 5 --retry-all-errors -H "Accept: application/octet-stream" -H "Authorization: Bearer $env:GH_TOKEN" -o "$root\vcpkg.exe" "https://api.github.com/repos/microsoft/vcpkg-tool/releases/assets/$id"
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg.exe download failed" }
+          & "$root\vcpkg.exe" version
+          "VCPKG_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # use the runner's cmake/ninja instead of letting vcpkg download them from GitHub releases
+          "VCPKG_FORCE_SYSTEM_BINARIES=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Install vcpkg dependencies
         env:
