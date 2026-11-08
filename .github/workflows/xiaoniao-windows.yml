@@ -85,7 +85,10 @@ jobs:
         run: |
           flutter doctor -v
           flutter precache --windows
-          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          for ($i = 1; $i -le 5; $i++) {
+            try { Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip; break }
+            catch { Write-Host "engine download failed (try $i): $_"; if ($i -eq 5) { throw }; Start-Sleep -Seconds (30 * $i) }
+          }
           Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
           mv -Force windows-x64-release/*  C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/
 
@@ -107,7 +110,36 @@ jobs:
         with:
           prefix-key: windows-2022-xiaoniao
 
-      - name: Setup vcpkg with Github Actions binary cache
+      # GitHub release downloads (vcpkg.exe) are flaky today: try up to 3 times.
+      - name: Setup vcpkg (try 1)
+        id: vcpkg1
+        continue-on-error: true
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Wait before vcpkg retry
+        if: steps.vcpkg1.outcome == 'failure'
+        run: Start-Sleep -Seconds 60
+
+      - name: Setup vcpkg (try 2)
+        id: vcpkg2
+        if: steps.vcpkg1.outcome == 'failure'
+        continue-on-error: true
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Wait before last vcpkg retry
+        if: steps.vcpkg1.outcome == 'failure' && steps.vcpkg2.outcome == 'failure'
+        run: Start-Sleep -Seconds 120
+
+      - name: Setup vcpkg (try 3)
+        if: steps.vcpkg1.outcome == 'failure' && steps.vcpkg2.outcome == 'failure'
         uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
         with:
           vcpkgDirectory: C:\vcpkg
