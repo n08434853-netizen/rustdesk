@@ -58,9 +58,21 @@ jobs:
           path: ./
 
       - name: Install LLVM and Clang
+        id: llvm
+        continue-on-error: true
         uses: KyleMayes/install-llvm-action@ebc0426251bc40c7cd31162802432c68818ab8f0 # v2.0.9
         with:
           version: ${{ env.LLVM_VERSION }}
+
+      # GitHub release download of LLVM-15.0.6-win64.exe kept returning 504; fall back to the runner's preinstalled LLVM.
+      - name: Fall back to preinstalled LLVM
+        if: steps.llvm.outcome == 'failure'
+        shell: pwsh
+        run: |
+          $llvm = "C:\Program Files\LLVM\bin"
+          & "$llvm\clang.exe" --version
+          "LIBCLANG_PATH=$llvm" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $llvm | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Install flutter
         uses: subosito/flutter-action@2783a3f08e1baf891508463f8c6653c258246225 # v2.12.0
