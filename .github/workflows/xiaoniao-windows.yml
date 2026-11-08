@@ -135,18 +135,25 @@ jobs:
           "VCPKG_FORCE_SYSTEM_BINARIES=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           # Route every vcpkg download through a script: github.com/<o>/<r>/releases/download/<tag>/<file>
           # is rewritten to the REST API asset endpoint; everything else is fetched as-is.
+          # vcpkg runs x-script with a scrubbed environment, so the token is read from a file, and curl is used instead of gh.
+          $env:GH_TOKEN | Out-File -FilePath C:\vcpkg-fetch-token.txt -NoNewline -Encoding ascii
           $fetch = @'
           param([string]$url, [string]$dst)
+          $tok = (Get-Content C:\vcpkg-fetch-token.txt -Raw).Trim()
           $m = [regex]::Match($url, '^https://github\.com/([^/]+)/([^/]+)/releases/download/([^/]+)/([^?#]+)')
           if ($m.Success) {
             $o = $m.Groups[1].Value; $r = $m.Groups[2].Value
             $tag = [uri]::UnescapeDataString($m.Groups[3].Value); $name = [uri]::UnescapeDataString($m.Groups[4].Value)
-            $id = gh api "repos/$o/$r/releases/tags/$tag" --jq ".assets[] | select(.name==`"$name`") | .id"
+            try {
+              $rel = curl.exe -fsSL --retry 5 --retry-all-errors -H "Authorization: Bearer $tok" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$o/$r/releases/tags/$([uri]::EscapeDataString($tag))" | ConvertFrom-Json
+              $id = ($rel.assets | Where-Object { $_.name -eq $name } | Select-Object -First 1).id
+            } catch { Write-Host "[fetch] release lookup failed: $_" }
             if ($id) {
               Write-Host "[fetch] $name via REST API asset $id"
-              curl.exe -fsSL --retry 5 --retry-all-errors -H "Accept: application/octet-stream" -H "Authorization: Bearer $env:GH_TOKEN" -o $dst "https://api.github.com/repos/$o/$r/releases/assets/$id"
+              curl.exe -fsSL --retry 5 --retry-all-errors -H "Accept: application/octet-stream" -H "Authorization: Bearer $tok" -o $dst "https://api.github.com/repos/$o/$r/releases/assets/$id"
               if ($LASTEXITCODE -eq 0) { exit 0 }
-            }
+              Write-Host "[fetch] REST API download failed ($LASTEXITCODE)"
+            } else { Write-Host "[fetch] no asset id for $o/$r $tag $name" }
           }
           Write-Host "[fetch] $url"
           curl.exe -fsSL --retry 5 --retry-all-errors -o $dst $url
